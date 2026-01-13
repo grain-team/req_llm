@@ -156,9 +156,12 @@ defmodule ReqLLM.Providers.OpenAI do
 
   @compile {:no_warn_undefined, [{nil, :path, 0}, {nil, :attach_stream, 4}]}
 
-  defp get_api_type(%LLMDB.Model{} = model) do
-    get_in(model, [Access.key(:extra, %{}), :api])
-  end
+  defp get_api_type(%LLMDB.Model{extra: %{api: api}}) when is_binary(api), do: api
+
+  defp get_api_type(%LLMDB.Model{extra: %{wire: %{protocol: "openai_responses"}}}),
+    do: "responses"
+
+  defp get_api_type(_), do: nil
 
   defp select_api_mod(%LLMDB.Model{} = model) do
     case get_api_type(model) do

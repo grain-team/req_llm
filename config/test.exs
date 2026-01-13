@@ -50,7 +50,8 @@ config :llm_db,
           family: "gpt-4o",
           capabilities: %{chat: true, tools: %{enabled: true, streaming: true}},
           limits: %{context: 128_000, output: 16_384},
-          cost: %{input: 0.15, output: 0.60}
+          cost: %{input: 0.15, output: 0.60},
+          extra: %{api: "chat"}
         },
         "gpt-3.5-turbo" => %{
           name: "GPT-3.5 Turbo",
@@ -69,7 +70,8 @@ config :llm_db,
           name: "GPT-4o",
           family: "gpt-4o",
           capabilities: %{chat: true, tools: %{enabled: true, streaming: true}},
-          limits: %{context: 128_000, output: 16_384}
+          limits: %{context: 128_000, output: 16_384},
+          extra: %{api: "chat"}
         },
         "o1-mini" => %{
           name: "o1-mini",
@@ -84,6 +86,13 @@ config :llm_db,
           capabilities: %{chat: true, reasoning: %{enabled: true}},
           limits: %{context: 200_000, output: 100_000},
           extra: %{api: "responses"}
+        },
+        "o3" => %{
+          name: "o3",
+          family: "o3",
+          capabilities: %{chat: true, reasoning: %{enabled: true}},
+          limits: %{context: 200_000, output: 100_000},
+          extra: %{wire: %{protocol: "openai_responses"}}
         },
         "o4-mini" => %{
           name: "o4-mini",

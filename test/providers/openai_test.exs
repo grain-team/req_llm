@@ -166,6 +166,61 @@ defmodule ReqLLM.Providers.OpenAITest do
     end
   end
 
+  describe "API routing based on model metadata" do
+    test "models with extra.api route to correct API module" do
+      {:ok, chat_model} = ReqLLM.model("openai:gpt-4o")
+      {:ok, chat_mini} = ReqLLM.model("openai:gpt-4o-mini")
+      context = context_fixture()
+
+      {:ok, chat_request} = OpenAI.prepare_request(:chat, chat_model, context, [])
+      {:ok, mini_request} = OpenAI.prepare_request(:chat, chat_mini, context, [])
+
+      assert chat_request.options[:api_mod] == ReqLLM.Providers.OpenAI.ChatAPI
+      assert chat_request.url.path == "/chat/completions"
+
+      assert mini_request.options[:api_mod] == ReqLLM.Providers.OpenAI.ChatAPI
+      assert mini_request.url.path == "/chat/completions"
+    end
+
+    test "models with wire.protocol openai_responses route to ResponsesAPI" do
+      {:ok, gpt5_mini} = ReqLLM.model("openai:gpt-5-mini")
+      {:ok, o3_model} = ReqLLM.model("openai:o3")
+      context = context_fixture()
+
+      {:ok, gpt5_request} = OpenAI.prepare_request(:chat, gpt5_mini, context, [])
+      {:ok, o3_request} = OpenAI.prepare_request(:chat, o3_model, context, [])
+
+      assert gpt5_request.options[:api_mod] == ReqLLM.Providers.OpenAI.ResponsesAPI
+      assert gpt5_request.url.path == "/responses"
+
+      assert o3_request.options[:api_mod] == ReqLLM.Providers.OpenAI.ResponsesAPI
+      assert o3_request.url.path == "/responses"
+    end
+
+    test "extra.api field is used when present" do
+      {:ok, model} = ReqLLM.model("openai:gpt-4o")
+
+      assert model.extra[:api] == "chat"
+
+      context = context_fixture()
+      {:ok, request} = OpenAI.prepare_request(:chat, model, context, [])
+
+      assert request.options[:api_mod] == ReqLLM.Providers.OpenAI.ChatAPI
+    end
+
+    test "models without api or wire.protocol default to ChatAPI" do
+      {:ok, embedding_model} = ReqLLM.model("openai:text-embedding-3-small")
+
+      refute embedding_model.extra[:api]
+      refute embedding_model.extra[:wire]
+
+      context = context_fixture()
+      {:ok, request} = OpenAI.prepare_request(:chat, embedding_model, context, [])
+
+      assert request.options[:api_mod] == ReqLLM.Providers.OpenAI.ChatAPI
+    end
+  end
+
   describe "body encoding & context translation" do
     test "encode_body for chat without tools" do
       {:ok, model} = ReqLLM.model("openai:gpt-4o")
