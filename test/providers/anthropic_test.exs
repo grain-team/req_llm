@@ -746,6 +746,31 @@ defmodule ReqLLM.Providers.AnthropicTest do
     end
   end
 
+  describe "map_reasoning_effort_to_budget/1" do
+    test "maps reasoning effort levels to token budgets" do
+      assert Anthropic.map_reasoning_effort_to_budget(:none) == nil
+      assert Anthropic.map_reasoning_effort_to_budget(:minimal) == 512
+      assert Anthropic.map_reasoning_effort_to_budget(:low) == 1_024
+      assert Anthropic.map_reasoning_effort_to_budget(:medium) == 2_048
+      assert Anthropic.map_reasoning_effort_to_budget(:high) == 4_096
+      assert Anthropic.map_reasoning_effort_to_budget(:xhigh) == 8_192
+    end
+
+    test "maps string reasoning effort levels to token budgets" do
+      assert Anthropic.map_reasoning_effort_to_budget("none") == nil
+      assert Anthropic.map_reasoning_effort_to_budget("minimal") == 512
+      assert Anthropic.map_reasoning_effort_to_budget("low") == 1_024
+      assert Anthropic.map_reasoning_effort_to_budget("medium") == 2_048
+      assert Anthropic.map_reasoning_effort_to_budget("high") == 4_096
+      assert Anthropic.map_reasoning_effort_to_budget("xhigh") == 8_192
+    end
+
+    test "defaults unknown values to medium budget" do
+      assert Anthropic.map_reasoning_effort_to_budget(:unknown) == 2_048
+      assert Anthropic.map_reasoning_effort_to_budget("unknown") == 2_048
+    end
+  end
+
   defp anthropic_format_json_fixture(opts \\ []) do
     %{
       "id" => Keyword.get(opts, :id, "msg_01XFDUDYJgAACzvnptvVoYEL"),
