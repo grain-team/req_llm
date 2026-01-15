@@ -747,27 +747,35 @@ defmodule ReqLLM.Providers.AnthropicTest do
   end
 
   describe "map_reasoning_effort_to_budget/1" do
-    test "maps reasoning effort levels to token budgets" do
-      assert Anthropic.map_reasoning_effort_to_budget(:none) == nil
-      assert Anthropic.map_reasoning_effort_to_budget(:minimal) == 512
-      assert Anthropic.map_reasoning_effort_to_budget(:low) == 1_024
-      assert Anthropic.map_reasoning_effort_to_budget(:medium) == 2_048
-      assert Anthropic.map_reasoning_effort_to_budget(:high) == 4_096
-      assert Anthropic.map_reasoning_effort_to_budget(:xhigh) == 8_192
-    end
+    test "translate_options maps reasoning_effort to thinking budget_tokens" do
+      {:ok, model} = ReqLLM.model("anthropic:claude-sonnet-4-5-20250929")
 
-    test "maps string reasoning effort levels to token budgets" do
-      assert Anthropic.map_reasoning_effort_to_budget("none") == nil
-      assert Anthropic.map_reasoning_effort_to_budget("minimal") == 512
-      assert Anthropic.map_reasoning_effort_to_budget("low") == 1_024
-      assert Anthropic.map_reasoning_effort_to_budget("medium") == 2_048
-      assert Anthropic.map_reasoning_effort_to_budget("high") == 4_096
-      assert Anthropic.map_reasoning_effort_to_budget("xhigh") == 8_192
-    end
+      test_cases = [
+        {:none, nil},
+        {:minimal, 512},
+        {:low, 1_024},
+        {:medium, 2_048},
+        {:high, 4_096},
+        {:xhigh, 8_192}
+      ]
 
-    test "defaults unknown values to medium budget" do
-      assert Anthropic.map_reasoning_effort_to_budget(:unknown) == 2_048
-      assert Anthropic.map_reasoning_effort_to_budget("unknown") == 2_048
+      for {effort, expected_budget} <- test_cases do
+        opts = [reasoning_effort: effort]
+        {translated_opts, _warnings} = Anthropic.translate_options(:chat, model, opts)
+
+        thinking = Keyword.get(translated_opts, :thinking)
+
+        if expected_budget == nil do
+          assert thinking == nil,
+                 "Expected reasoning_effort #{inspect(effort)} to not set thinking option"
+        else
+          assert thinking != nil,
+                 "Expected reasoning_effort #{inspect(effort)} to set thinking option"
+
+          assert thinking.budget_tokens == expected_budget,
+                 "Expected reasoning_effort #{inspect(effort)} to map to budget #{expected_budget}"
+        end
+      end
     end
   end
 
