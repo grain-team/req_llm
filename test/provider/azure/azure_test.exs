@@ -4,7 +4,7 @@ defmodule ReqLLM.Providers.AzureTest do
 
   Tests Azure-specific provider behaviors:
   - Deployment-based URL construction
-  - api-key header authentication (not Bearer token)
+  - api-key header authentication and Bearer token authentication
   - API version handling
   - Model family routing (OpenAI vs Anthropic)
   - Option translation delegation
@@ -115,7 +115,7 @@ defmodule ReqLLM.Providers.AzureTest do
   end
 
   describe "attach/3" do
-    test "sets api-key header instead of Bearer token" do
+    test "sets api-key header for regular api keys" do
       {:ok, model} = ReqLLM.model("azure:gpt-4o")
       context = ReqLLM.Context.new([ReqLLM.Context.user("Hello")])
 
@@ -131,6 +131,53 @@ defmodule ReqLLM.Providers.AzureTest do
 
       assert Req.Request.get_header(request, "api-key") == ["test-api-key"]
       refute Req.Request.get_header(request, "authorization") |> Enum.any?(&(&1 =~ "Bearer"))
+    end
+
+    test "sets Authorization Bearer header when api_key starts with 'Bearer '" do
+      {:ok, model} = ReqLLM.model("azure:gpt-4o")
+      context = ReqLLM.Context.new([ReqLLM.Context.user("Hello")])
+
+      request =
+        Req.new(url: "/test", method: :post)
+        |> Req.Request.register_options([:context, :api_key, :base_url])
+        |> Req.Request.merge_options(context: context)
+        |> Azure.attach(model,
+          api_key: "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.test",
+          context: context,
+          base_url: "https://my-resource.openai.azure.com/openai"
+        )
+
+      assert Req.Request.get_header(request, "authorization") == [
+               "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.test"
+             ]
+
+      assert Req.Request.get_header(request, "api-key") == []
+    end
+
+    test "Bearer token takes precedence over model family for Claude models" do
+      model = %LLMDB.Model{
+        id: "claude-3-5-sonnet-20241022",
+        provider: :azure,
+        capabilities: %{chat: true}
+      }
+
+      context = ReqLLM.Context.new([ReqLLM.Context.user("Hello")])
+
+      request =
+        Req.new(url: "/test", method: :post)
+        |> Req.Request.register_options([:context, :api_key, :base_url])
+        |> Req.Request.merge_options(context: context)
+        |> Azure.attach(model,
+          api_key: "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.test",
+          context: context,
+          base_url: "https://my-resource.openai.azure.com/openai"
+        )
+
+      assert Req.Request.get_header(request, "authorization") == [
+               "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.test"
+             ]
+
+      assert Req.Request.get_header(request, "x-api-key") == []
     end
 
     test "sets content-type header" do
@@ -185,6 +232,53 @@ defmodule ReqLLM.Providers.AzureTest do
       header_map = Map.new(finch_request.headers)
       assert header_map["api-key"] == "test-api-key"
       assert header_map["content-type"] == "application/json"
+    end
+
+    test "uses Authorization Bearer header when api_key starts with 'Bearer '" do
+      {:ok, model} = ReqLLM.model("azure:gpt-4o")
+      context = ReqLLM.Context.new([ReqLLM.Context.user("Hello")])
+
+      {:ok, finch_request} =
+        Azure.attach_stream(
+          model,
+          context,
+          [
+            api_key: "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.test",
+            deployment: "my-deployment",
+            base_url: "https://my-resource.openai.azure.com/openai"
+          ],
+          :req_llm_finch
+        )
+
+      header_map = Map.new(finch_request.headers)
+      assert header_map["authorization"] == "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.test"
+      refute Map.has_key?(header_map, "api-key")
+    end
+
+    test "Bearer token takes precedence for Claude models in streaming" do
+      model = %LLMDB.Model{
+        id: "claude-3-5-sonnet-20241022",
+        provider: :azure,
+        capabilities: %{chat: true}
+      }
+
+      context = ReqLLM.Context.new([ReqLLM.Context.user("Hello")])
+
+      {:ok, finch_request} =
+        Azure.attach_stream(
+          model,
+          context,
+          [
+            api_key: "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.test",
+            deployment: "claude-deployment",
+            base_url: "https://my-resource.openai.azure.com/openai"
+          ],
+          :req_llm_finch
+        )
+
+      header_map = Map.new(finch_request.headers)
+      assert header_map["authorization"] == "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.test"
+      refute Map.has_key?(header_map, "x-api-key")
     end
 
     test "does not include anthropic-version header for OpenAI models" do

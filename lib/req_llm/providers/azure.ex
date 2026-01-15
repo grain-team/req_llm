@@ -33,9 +33,11 @@ defmodule ReqLLM.Providers.Azure do
      - OpenAI: `/deployments/{deployment}/chat/completions?api-version={version}`
      - Anthropic: `/deployments/{deployment}/messages?api-version={version}`
 
-  3. **API key authentication**: Uses `api-key` header for all model families
+  3. **API key authentication**: Uses `api-key` header for OpenAI models, `x-api-key` for Claude
 
-  4. **No model field in body**: The deployment ID in the URL determines the model
+  4. **Bearer token authentication**: Prefix api_key with `"Bearer "` to use `Authorization: Bearer` header
+
+  5. **No model field in body**: The deployment ID in the URL determines the model
 
   ## Authentication
 
@@ -58,6 +60,15 @@ defmodule ReqLLM.Providers.Azure do
         "azure:gpt-4o",
         "Hello!",
         api_key: "your-api-key",
+        base_url: "https://my-resource.openai.azure.com/openai",
+        deployment: "my-gpt4-deployment"
+      )
+
+      # Using Bearer token authentication (e.g., Entra ID / Azure AD tokens)
+      ReqLLM.generate_text(
+        "azure:gpt-4o",
+        "Hello!",
+        api_key: "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
         base_url: "https://my-resource.openai.azure.com/openai",
         deployment: "my-gpt4-deployment"
       )
@@ -442,8 +453,11 @@ defmodule ReqLLM.Providers.Azure do
   @doc """
   Attaches Azure-specific authentication and pipeline steps to a request.
 
-  Uses `api-key` header authentication (not Bearer token) and adds model-family
-  specific headers (e.g., `anthropic-version` for Claude models).
+  Authentication is determined by the api_key format:
+  - If api_key starts with "Bearer ", uses `Authorization: Bearer` header
+  - Otherwise, uses `api-key` header for OpenAI models, `x-api-key` for Claude
+
+  Also adds model-family specific headers (e.g., `anthropic-version` for Claude models).
   """
   @impl ReqLLM.Provider
   def attach(request, model_input, user_opts) do
@@ -458,13 +472,11 @@ defmodule ReqLLM.Providers.Azure do
 
     {api_key, extra_option_keys} = resolve_api_key(model_family, model, user_opts)
     extra_headers = get_anthropic_headers(model_id, user_opts)
-
-    # Azure Anthropic uses x-api-key (like native Anthropic), Azure OpenAI uses api-key
-    auth_header_name = if model_family == "claude", do: "x-api-key", else: "api-key"
+    {auth_header_name, auth_header_value} = build_auth_header(api_key, model_family)
 
     request
     |> Req.Request.put_header("content-type", "application/json")
-    |> Req.Request.put_header(auth_header_name, api_key)
+    |> Req.Request.put_header(auth_header_name, auth_header_value)
     |> then(fn req ->
       Enum.reduce(extra_headers, req, fn {key, value}, acc ->
         Req.Request.put_header(acc, key, value)
@@ -613,16 +625,8 @@ defmodule ReqLLM.Providers.Azure do
       "[Azure attach_stream] model_family=#{model_family}, url=#{url}, formatter=#{inspect(formatter)}"
     )
 
-    # Azure Anthropic uses x-api-key (like native Anthropic), Azure OpenAI uses api-key
-    auth_header =
-      if model_family == "claude" do
-        {"x-api-key", api_key}
-      else
-        {"api-key", api_key}
-      end
-
     base_headers = [
-      auth_header,
+      build_auth_header(api_key, model_family),
       {"content-type", "application/json"},
       {"accept", "text/event-stream"}
     ]
@@ -849,6 +853,18 @@ defmodule ReqLLM.Providers.Azure do
       nil -> nil
       env_var -> System.get_env(env_var)
     end
+  end
+
+  defp build_auth_header("Bearer " <> token, _model_family) do
+    {"authorization", "Bearer #{token}"}
+  end
+
+  defp build_auth_header(api_key, "claude") do
+    {"x-api-key", api_key}
+  end
+
+  defp build_auth_header(api_key, _model_family) do
+    {"api-key", api_key}
   end
 
   defp get_deployment_with_warning(model, opts) do
