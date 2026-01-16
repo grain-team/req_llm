@@ -912,6 +912,85 @@ defmodule ReqLLM.Providers.AzureTest do
       api_key_header = get_header(request.headers, "api-key")
       assert api_key_header == "test-api-key" or api_key_header == "  test-api-key  "
     end
+
+    test "rejects empty Bearer token" do
+      {:ok, model} = ReqLLM.model("azure:gpt-4o")
+
+      assert_raise ReqLLM.Error.Invalid.Parameter, ~r/Bearer token cannot be empty/, fn ->
+        Azure.prepare_request(
+          :chat,
+          model,
+          "Hello",
+          api_key: "Bearer ",
+          base_url: "https://my-resource.openai.azure.com/openai"
+        )
+      end
+    end
+
+    test "rejects Bearer token with only whitespace" do
+      {:ok, model} = ReqLLM.model("azure:gpt-4o")
+
+      assert_raise ReqLLM.Error.Invalid.Parameter, ~r/Bearer token cannot be empty/, fn ->
+        Azure.prepare_request(
+          :chat,
+          model,
+          "Hello",
+          api_key: "Bearer    ",
+          base_url: "https://my-resource.openai.azure.com/openai"
+        )
+      end
+    end
+
+    test "rejects Bearer token with newline characters (header injection protection)" do
+      {:ok, model} = ReqLLM.model("azure:gpt-4o")
+
+      assert_raise ReqLLM.Error.Invalid.Parameter,
+                   ~r/Bearer token contains invalid characters/,
+                   fn ->
+                     Azure.prepare_request(
+                       :chat,
+                       model,
+                       "Hello",
+                       api_key: "Bearer token\nX-Injected-Header: malicious",
+                       base_url: "https://my-resource.openai.azure.com/openai"
+                     )
+                   end
+    end
+
+    test "rejects Bearer token with carriage return characters" do
+      {:ok, model} = ReqLLM.model("azure:gpt-4o")
+
+      assert_raise ReqLLM.Error.Invalid.Parameter,
+                   ~r/Bearer token contains invalid characters/,
+                   fn ->
+                     Azure.prepare_request(
+                       :chat,
+                       model,
+                       "Hello",
+                       api_key: "Bearer token\r\nX-Injected-Header: malicious",
+                       base_url: "https://my-resource.openai.azure.com/openai"
+                     )
+                   end
+    end
+
+    test "trims whitespace from Bearer token value" do
+      {:ok, model} = ReqLLM.model("azure:gpt-4o")
+      context = ReqLLM.Context.new([ReqLLM.Context.user("Hello")])
+
+      request =
+        Req.new(url: "/test", method: :post)
+        |> Req.Request.register_options([:context, :api_key, :base_url])
+        |> Req.Request.merge_options(context: context)
+        |> Azure.attach(model,
+          api_key: "Bearer   eyJhbGciOiJSUzI1NiJ9.test   ",
+          context: context,
+          base_url: "https://my-resource.openai.azure.com/openai"
+        )
+
+      assert Req.Request.get_header(request, "authorization") == [
+               "Bearer eyJhbGciOiJSUzI1NiJ9.test"
+             ]
+    end
   end
 
   defp get_header(headers, key) do

@@ -805,8 +805,11 @@ defmodule ReqLLM.Providers.Azure do
           {nil, "none"}
       end
 
+    auth_mode =
+      if api_key && String.starts_with?(api_key, "Bearer "), do: "bearer", else: "api_key"
+
     Logger.debug(
-      "[Azure resolve_api_key] model_family=#{model_family}, source=#{source}, key_prefix=#{if api_key, do: String.slice(api_key, 0, 8), else: "nil"}..."
+      "[Azure resolve_api_key] model_family=#{model_family}, source=#{source}, auth_mode=#{auth_mode}, key_present=#{not is_nil(api_key)}"
     )
 
     if is_nil(api_key) or api_key == "" do
@@ -856,7 +859,22 @@ defmodule ReqLLM.Providers.Azure do
   end
 
   defp build_auth_header("Bearer " <> token, _model_family) do
-    {"authorization", "Bearer #{token}"}
+    token = String.trim(token)
+
+    cond do
+      token == "" ->
+        raise ReqLLM.Error.Invalid.Parameter.exception(
+                parameter: ":api_key - Bearer token cannot be empty"
+              )
+
+      String.contains?(token, ["\r", "\n"]) ->
+        raise ReqLLM.Error.Invalid.Parameter.exception(
+                parameter: ":api_key - Bearer token contains invalid characters"
+              )
+
+      true ->
+        {"authorization", "Bearer #{token}"}
+    end
   end
 
   defp build_auth_header(api_key, "claude") do
