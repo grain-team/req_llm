@@ -548,6 +548,29 @@ defmodule ReqLLM.Providers.GoogleTest do
                "Expected #{provider_option} to be in supported options"
       end
     end
+
+    test "translate_options maps reasoning_effort to google_thinking_budget" do
+      {:ok, model} = ReqLLM.model("google:gemini-1.5-flash")
+
+      test_cases = [
+        {:none, 0},
+        {:minimal, 2_048},
+        {:low, 4_096},
+        {:medium, 8_192},
+        {:high, 16_384},
+        {:xhigh, 32_768}
+      ]
+
+      for {effort, expected_budget} <- test_cases do
+        opts = [reasoning_effort: effort]
+        {translated_opts, _warnings} = Google.translate_options(:chat, model, opts)
+
+        provider_opts = Keyword.get(translated_opts, :provider_options, [])
+
+        assert Keyword.get(provider_opts, :google_thinking_budget) == expected_budget,
+               "Expected reasoning_effort #{inspect(effort)} to map to budget #{expected_budget}"
+      end
+    end
   end
 
   describe "usage extraction" do
@@ -918,6 +941,271 @@ defmodule ReqLLM.Providers.GoogleTest do
       assert Map.has_key?(part, "inline_data")
       assert part["inline_data"]["mime_type"] == "image/png"
       assert Base.decode64!(part["inline_data"]["data"]) == image_content
+    end
+  end
+
+  describe "image_url file URI support" do
+    test "encode_body converts HTTPS image_url to fileData format" do
+      url = "https://example.com/images/photo.jpg"
+
+      image_url_part = ReqLLM.Message.ContentPart.image_url(url)
+
+      message = %ReqLLM.Message{
+        role: :user,
+        content: [image_url_part]
+      }
+
+      context = %ReqLLM.Context{messages: [message]}
+
+      mock_request = %Req.Request{
+        options: [
+          context: context,
+          id: "gemini-1.5-flash",
+          stream: false
+        ]
+      }
+
+      updated_request = Google.encode_body(mock_request)
+      decoded = Jason.decode!(updated_request.body)
+
+      [user_msg] = decoded["contents"]
+      [part] = user_msg["parts"]
+
+      assert Map.has_key?(part, "fileData")
+      assert part["fileData"]["fileUri"] == url
+      assert part["fileData"]["mimeType"] == "image/jpeg"
+    end
+
+    test "encode_body converts HTTP image_url to fileData format" do
+      url = "http://example.com/images/photo.png"
+
+      image_url_part = ReqLLM.Message.ContentPart.image_url(url)
+
+      message = %ReqLLM.Message{
+        role: :user,
+        content: [image_url_part]
+      }
+
+      context = %ReqLLM.Context{messages: [message]}
+
+      mock_request = %Req.Request{
+        options: [
+          context: context,
+          id: "gemini-1.5-flash",
+          stream: false
+        ]
+      }
+
+      updated_request = Google.encode_body(mock_request)
+      decoded = Jason.decode!(updated_request.body)
+
+      [user_msg] = decoded["contents"]
+      [part] = user_msg["parts"]
+
+      assert Map.has_key?(part, "fileData")
+      assert part["fileData"]["fileUri"] == url
+      assert part["fileData"]["mimeType"] == "image/png"
+    end
+
+    test "encode_body converts GCS URI to fileData format" do
+      url = "gs://my-bucket/path/to/document.pdf"
+
+      image_url_part = ReqLLM.Message.ContentPart.image_url(url)
+
+      message = %ReqLLM.Message{
+        role: :user,
+        content: [image_url_part]
+      }
+
+      context = %ReqLLM.Context{messages: [message]}
+
+      mock_request = %Req.Request{
+        options: [
+          context: context,
+          id: "gemini-1.5-flash",
+          stream: false
+        ]
+      }
+
+      updated_request = Google.encode_body(mock_request)
+      decoded = Jason.decode!(updated_request.body)
+
+      [user_msg] = decoded["contents"]
+      [part] = user_msg["parts"]
+
+      assert Map.has_key?(part, "fileData")
+      assert part["fileData"]["fileUri"] == url
+      assert part["fileData"]["mimeType"] == "application/pdf"
+    end
+
+    test "encode_body infers mime type from URL extension" do
+      test_cases = [
+        {"https://example.com/file.jpg", "image/jpeg"},
+        {"https://example.com/file.jpeg", "image/jpeg"},
+        {"https://example.com/file.png", "image/png"},
+        {"https://example.com/file.gif", "image/gif"},
+        {"https://example.com/file.webp", "image/webp"},
+        {"https://example.com/file.pdf", "application/pdf"},
+        {"https://example.com/file.mp3", "audio/mpeg"},
+        {"https://example.com/file.mp4", "video/mp4"},
+        {"https://example.com/file.m4a", "audio/mp4"},
+        {"https://example.com/file.wav", "audio/wav"},
+        {"https://example.com/file.unknown", "application/octet-stream"}
+      ]
+
+      for {url, expected_mime} <- test_cases do
+        image_url_part = ReqLLM.Message.ContentPart.image_url(url)
+
+        message = %ReqLLM.Message{
+          role: :user,
+          content: [image_url_part]
+        }
+
+        context = %ReqLLM.Context{messages: [message]}
+
+        mock_request = %Req.Request{
+          options: [
+            context: context,
+            id: "gemini-1.5-flash",
+            stream: false
+          ]
+        }
+
+        updated_request = Google.encode_body(mock_request)
+        decoded = Jason.decode!(updated_request.body)
+
+        [user_msg] = decoded["contents"]
+        [part] = user_msg["parts"]
+
+        assert part["fileData"]["mimeType"] == expected_mime,
+               "Expected #{expected_mime} for #{url}, got #{part["fileData"]["mimeType"]}"
+      end
+    end
+
+    test "encode_body strips query params when inferring mime type from URL" do
+      url = "https://example.com/image.jpg?token=abc123&size=large"
+
+      image_url_part = ReqLLM.Message.ContentPart.image_url(url)
+
+      message = %ReqLLM.Message{
+        role: :user,
+        content: [image_url_part]
+      }
+
+      context = %ReqLLM.Context{messages: [message]}
+
+      mock_request = %Req.Request{
+        options: [
+          context: context,
+          id: "gemini-1.5-flash",
+          stream: false
+        ]
+      }
+
+      updated_request = Google.encode_body(mock_request)
+      decoded = Jason.decode!(updated_request.body)
+
+      [user_msg] = decoded["contents"]
+      [part] = user_msg["parts"]
+
+      assert part["fileData"]["mimeType"] == "image/jpeg"
+      # URL should be preserved with query params
+      assert part["fileData"]["fileUri"] == url
+    end
+
+    test "encode_body handles data URI format in image_url" do
+      base64_data = Base.encode64("fake image data")
+      url = "data:image/png;base64,#{base64_data}"
+
+      image_url_part = ReqLLM.Message.ContentPart.image_url(url)
+
+      message = %ReqLLM.Message{
+        role: :user,
+        content: [image_url_part]
+      }
+
+      context = %ReqLLM.Context{messages: [message]}
+
+      mock_request = %Req.Request{
+        options: [
+          context: context,
+          id: "gemini-1.5-flash",
+          stream: false
+        ]
+      }
+
+      updated_request = Google.encode_body(mock_request)
+      decoded = Jason.decode!(updated_request.body)
+
+      [user_msg] = decoded["contents"]
+      [part] = user_msg["parts"]
+
+      # Data URIs should use inline_data format, not fileData
+      assert Map.has_key?(part, "inline_data")
+      assert part["inline_data"]["mime_type"] == "image/png"
+      assert part["inline_data"]["data"] == base64_data
+    end
+
+    test "encode_body returns error text for unsupported URL schemes" do
+      url = "ftp://example.com/file.jpg"
+
+      image_url_part = ReqLLM.Message.ContentPart.image_url(url)
+
+      message = %ReqLLM.Message{
+        role: :user,
+        content: [image_url_part]
+      }
+
+      context = %ReqLLM.Context{messages: [message]}
+
+      mock_request = %Req.Request{
+        options: [
+          context: context,
+          id: "gemini-1.5-flash",
+          stream: false
+        ]
+      }
+
+      updated_request = Google.encode_body(mock_request)
+      decoded = Jason.decode!(updated_request.body)
+
+      [user_msg] = decoded["contents"]
+      [part] = user_msg["parts"]
+
+      # Should fall back to text with error message
+      assert Map.has_key?(part, "text")
+      assert part["text"] =~ "Unsupported URL scheme"
+    end
+
+    test "encode_body handles malformed data URI gracefully" do
+      # Data URI without the comma separator
+      url = "data:image/png;base64"
+
+      image_url_part = ReqLLM.Message.ContentPart.image_url(url)
+
+      message = %ReqLLM.Message{
+        role: :user,
+        content: [image_url_part]
+      }
+
+      context = %ReqLLM.Context{messages: [message]}
+
+      mock_request = %Req.Request{
+        options: [
+          context: context,
+          id: "gemini-1.5-flash",
+          stream: false
+        ]
+      }
+
+      updated_request = Google.encode_body(mock_request)
+      decoded = Jason.decode!(updated_request.body)
+
+      [user_msg] = decoded["contents"]
+      [part] = user_msg["parts"]
+
+      assert Map.has_key?(part, "text")
+      assert part["text"] =~ "Malformed data URI"
     end
   end
 end

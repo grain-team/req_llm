@@ -61,6 +61,11 @@ Passed via `:provider_options` keyword:
 - **Purpose**: Control reasoning effort (Responses API only)
 - **Example**: `reasoning_effort: :high`
 
+### `service_tier`
+- **Type**: `:auto` | `:default` | `:flex` | `:priority` | String
+- **Purpose**: Service tier for request prioritization
+- **Example**: `service_tier: :auto`
+
 ### `seed`
 - **Type**: Integer
 - **Purpose**: Set seed for reproducible outputs

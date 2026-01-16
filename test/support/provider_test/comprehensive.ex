@@ -79,6 +79,13 @@ defmodule ReqLLM.ProviderTest.Comprehensive do
     end
   end
 
+  def supports_forced_tool_choice?(model_spec) do
+    case ReqLLM.model(model_spec) do
+      {:ok, model} -> get_in(model.capabilities, [:tools, :forced_choice]) != false
+      {:error, _} -> true
+    end
+  end
+
   defmacro __using__(opts) do
     provider = Keyword.fetch!(opts, :provider)
 
@@ -239,7 +246,7 @@ defmodule ReqLLM.ProviderTest.Comprehensive do
               case ReqLLM.model(@model_spec) do
                 {:ok, %{capabilities: %{reasoning: true}}} -> 500
                 {:ok, %{model: "gpt-4.1" <> _}} -> 16
-                {:ok, %{extra: %{api: "responses"}}} -> 200
+                {:ok, %{extra: %{wire: %{protocol: "openai_responses"}}}} -> 200
                 _ -> 10
               end
 
@@ -406,6 +413,14 @@ defmodule ReqLLM.ProviderTest.Comprehensive do
                 param_bundles().deterministic
                 |> Keyword.put(:max_tokens, tool_budget_for(@model_spec))
 
+              # Use forced tool choice if supported, otherwise fall back to "required"
+              tool_choice =
+                if ReqLLM.ProviderTest.Comprehensive.supports_forced_tool_choice?(@model_spec) do
+                  %{type: "tool", name: "add"}
+                else
+                  "required"
+                end
+
               {:ok, resp1} =
                 ReqLLM.generate_text(
                   @model_spec,
@@ -415,7 +430,7 @@ defmodule ReqLLM.ProviderTest.Comprehensive do
                     base_opts ++
                       [
                         tools: tools,
-                        tool_choice: %{type: "tool", name: "add"}
+                        tool_choice: tool_choice
                       ]
                   )
                 )
