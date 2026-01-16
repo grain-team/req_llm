@@ -36,7 +36,7 @@ defmodule ReqLLM.Providers.Azure do
   2. **API key authentication**: Uses `api-key` header for all model families
 
   3. **Bearer token authentication**: Prefix api_key with `"Bearer "` to use `Authorization: Bearer` header
-  
+
   4. **Deployment names**: The deployment name is used either in the URL path
      (traditional) or in the request body (Foundry format)
 
