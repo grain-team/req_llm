@@ -799,4 +799,358 @@ defmodule ReqLLM.Providers.AnthropicTest do
       }
     }
   end
+
+  describe "thinking blocks (reasoning details)" do
+    test "decode_response extracts thinking blocks into reasoning_details" do
+      response_with_thinking = %{
+        "id" => "msg_01ABC123",
+        "type" => "message",
+        "role" => "assistant",
+        "model" => "claude-sonnet-4-5-20250929",
+        "content" => [
+          %{
+            "type" => "thinking",
+            "thinking" => "Let me analyze this step by step...",
+            "signature" => "EqQBtest123"
+          },
+          %{"type" => "text", "text" => "The answer is 42."}
+        ],
+        "stop_reason" => "end_turn",
+        "usage" => %{"input_tokens" => 10, "output_tokens" => 20}
+      }
+
+      {:ok, model} = ReqLLM.model("anthropic:claude-sonnet-4-5-20250929")
+
+      {:ok, response} =
+        ReqLLM.Providers.Anthropic.Response.decode_response(response_with_thinking, model)
+
+      assert response.message != nil
+      assert response.message.reasoning_details != nil
+      assert length(response.message.reasoning_details) == 1
+
+      [detail] = response.message.reasoning_details
+      assert detail.text == "Let me analyze this step by step..."
+      assert detail.signature == "EqQBtest123"
+      assert detail.encrypted? == false
+      assert detail.provider == :anthropic
+      assert detail.format == "anthropic-thinking-v1"
+      assert detail.index == 0
+      assert detail.provider_data == %{"type" => "thinking"}
+    end
+
+    test "decode_response handles response without thinking blocks" do
+      response_without_thinking = %{
+        "id" => "msg_01ABC123",
+        "type" => "message",
+        "role" => "assistant",
+        "model" => "claude-sonnet-4-5-20250929",
+        "content" => [
+          %{"type" => "text", "text" => "Just a regular response."}
+        ],
+        "stop_reason" => "end_turn",
+        "usage" => %{"input_tokens" => 5, "output_tokens" => 10}
+      }
+
+      {:ok, model} = ReqLLM.model("anthropic:claude-sonnet-4-5-20250929")
+
+      {:ok, response} =
+        ReqLLM.Providers.Anthropic.Response.decode_response(response_without_thinking, model)
+
+      assert response.message != nil
+      assert response.message.reasoning_details == nil
+    end
+
+    test "decode_response handles multiple thinking blocks" do
+      response_with_multiple_thinking = %{
+        "id" => "msg_01ABC123",
+        "type" => "message",
+        "role" => "assistant",
+        "model" => "claude-sonnet-4-5-20250929",
+        "content" => [
+          %{"type" => "thinking", "thinking" => "First thought...", "signature" => "sig1"},
+          %{"type" => "thinking", "thinking" => "Second thought...", "signature" => "sig2"},
+          %{"type" => "text", "text" => "My conclusion."}
+        ],
+        "stop_reason" => "end_turn",
+        "usage" => %{"input_tokens" => 10, "output_tokens" => 30}
+      }
+
+      {:ok, model} = ReqLLM.model("anthropic:claude-sonnet-4-5-20250929")
+
+      {:ok, response} =
+        ReqLLM.Providers.Anthropic.Response.decode_response(
+          response_with_multiple_thinking,
+          model
+        )
+
+      assert length(response.message.reasoning_details) == 2
+
+      [first, second] = response.message.reasoning_details
+      assert first.text == "First thought..."
+      assert first.index == 0
+      assert second.text == "Second thought..."
+      assert second.index == 1
+    end
+
+    test "encode_message includes thinking blocks for assistant with reasoning_details" do
+      {:ok, model} = ReqLLM.model("anthropic:claude-sonnet-4-5-20250929")
+
+      reasoning_detail = %ReqLLM.Message.ReasoningDetails{
+        text: "My thinking process...",
+        signature: "EqQBsignature123",
+        encrypted?: false,
+        provider: :anthropic,
+        format: "anthropic-thinking-v1",
+        index: 0,
+        provider_data: %{"type" => "thinking"}
+      }
+
+      assistant_message = %ReqLLM.Message{
+        role: :assistant,
+        content: [%ReqLLM.Message.ContentPart{type: :text, text: "The answer is 42."}],
+        reasoning_details: [reasoning_detail],
+        metadata: %{}
+      }
+
+      context =
+        ReqLLM.Context.new([
+          ReqLLM.Context.user("What is the meaning of life?"),
+          assistant_message
+        ])
+
+      encoded = ReqLLM.Providers.Anthropic.Context.encode_request(context, model)
+      messages = encoded[:messages]
+
+      assistant_msg = Enum.find(messages, fn m -> m[:role] == "assistant" end)
+      assert assistant_msg != nil
+      assert is_list(assistant_msg[:content])
+
+      content_blocks = assistant_msg[:content]
+      thinking_block = Enum.find(content_blocks, fn b -> b[:type] == "thinking" end)
+      text_block = Enum.find(content_blocks, fn b -> b[:type] == "text" end)
+
+      assert thinking_block != nil
+      assert thinking_block[:thinking] == "My thinking process..."
+      assert thinking_block[:signature] == "EqQBsignature123"
+
+      assert text_block != nil
+      assert text_block[:text] == "The answer is 42."
+
+      thinking_index = Enum.find_index(content_blocks, fn b -> b[:type] == "thinking" end)
+      text_index = Enum.find_index(content_blocks, fn b -> b[:type] == "text" end)
+      assert thinking_index < text_index
+    end
+
+    test "encode_message skips non-Anthropic reasoning details with warning" do
+      import ExUnit.CaptureLog
+
+      {:ok, model} = ReqLLM.model("anthropic:claude-sonnet-4-5-20250929")
+
+      non_anthropic_detail = %ReqLLM.Message.ReasoningDetails{
+        text: "OpenAI reasoning...",
+        signature: nil,
+        encrypted?: false,
+        provider: :openai,
+        format: "openai-reasoning-v1",
+        index: 0,
+        provider_data: %{}
+      }
+
+      assistant_message = %ReqLLM.Message{
+        role: :assistant,
+        content: [%ReqLLM.Message.ContentPart{type: :text, text: "Response text."}],
+        reasoning_details: [non_anthropic_detail],
+        metadata: %{}
+      }
+
+      context =
+        ReqLLM.Context.new([
+          ReqLLM.Context.user("Question?"),
+          assistant_message
+        ])
+
+      log =
+        capture_log(fn ->
+          encoded = ReqLLM.Providers.Anthropic.Context.encode_request(context, model)
+          messages = encoded[:messages]
+          assistant_msg = Enum.find(messages, fn m -> m[:role] == "assistant" end)
+          content_blocks = assistant_msg[:content]
+
+          thinking_blocks =
+            Enum.filter(content_blocks, fn b ->
+              is_map(b) and b[:type] == "thinking"
+            end)
+
+          assert thinking_blocks == []
+        end)
+
+      assert log =~ "Skipping non-Anthropic reasoning detail"
+      assert log =~ ":openai"
+    end
+
+    test "encode_message with reasoning_details and tool_calls preserves order" do
+      {:ok, model} = ReqLLM.model("anthropic:claude-sonnet-4-5-20250929")
+
+      reasoning_detail = %ReqLLM.Message.ReasoningDetails{
+        text: "Let me think about which tool to use...",
+        signature: "sig123",
+        encrypted?: false,
+        provider: :anthropic,
+        format: "anthropic-thinking-v1",
+        index: 0,
+        provider_data: %{"type" => "thinking"}
+      }
+
+      tool_call = %ReqLLM.ToolCall{
+        id: "call_123",
+        type: "function",
+        function: %{name: "get_weather", arguments: ~s({"location":"NYC"})}
+      }
+
+      assistant_message = %ReqLLM.Message{
+        role: :assistant,
+        content: [%ReqLLM.Message.ContentPart{type: :text, text: "I'll check the weather."}],
+        tool_calls: [tool_call],
+        reasoning_details: [reasoning_detail],
+        metadata: %{}
+      }
+
+      context =
+        ReqLLM.Context.new([
+          ReqLLM.Context.user("What's the weather in NYC?"),
+          assistant_message
+        ])
+
+      encoded = ReqLLM.Providers.Anthropic.Context.encode_request(context, model)
+      messages = encoded[:messages]
+
+      assistant_msg = Enum.find(messages, fn m -> m[:role] == "assistant" end)
+      content_blocks = assistant_msg[:content]
+
+      type_order = Enum.map(content_blocks, fn b -> b[:type] end)
+      assert type_order == ["thinking", "text", "tool_use"]
+    end
+  end
+
+  describe "ResponseBuilder - streaming reasoning_details extraction" do
+    alias ReqLLM.Providers.Anthropic.ResponseBuilder
+
+    test "extracts reasoning_details from thinking chunks" do
+      {:ok, model} = ReqLLM.model("anthropic:claude-sonnet-4-20250514")
+      context = %ReqLLM.Context{messages: []}
+
+      thinking_meta = %{
+        provider: :anthropic,
+        format: "anthropic-thinking-v1",
+        encrypted?: false,
+        provider_data: %{"type" => "thinking"}
+      }
+
+      chunks = [
+        ReqLLM.StreamChunk.thinking("Let me analyze this step by step", thinking_meta),
+        ReqLLM.StreamChunk.thinking("First, consider the constraints", thinking_meta),
+        ReqLLM.StreamChunk.text("The answer is 42.")
+      ]
+
+      metadata = %{finish_reason: :stop}
+
+      {:ok, response} =
+        ResponseBuilder.build_response(chunks, metadata, context: context, model: model)
+
+      assert response.message.reasoning_details != nil
+      assert length(response.message.reasoning_details) == 2
+
+      [first, second] = response.message.reasoning_details
+      assert %ReqLLM.Message.ReasoningDetails{} = first
+      assert first.text == "Let me analyze this step by step"
+      assert first.provider == :anthropic
+      assert first.format == "anthropic-thinking-v1"
+      assert first.index == 0
+
+      assert second.text == "First, consider the constraints"
+      assert second.index == 1
+    end
+
+    test "returns nil reasoning_details when no thinking chunks" do
+      {:ok, model} = ReqLLM.model("anthropic:claude-sonnet-4-20250514")
+      context = %ReqLLM.Context{messages: []}
+
+      chunks = [
+        ReqLLM.StreamChunk.text("Just a simple response.")
+      ]
+
+      metadata = %{finish_reason: :stop}
+
+      {:ok, response} =
+        ResponseBuilder.build_response(chunks, metadata, context: context, model: model)
+
+      assert response.message.reasoning_details == nil
+    end
+
+    test "preserves signature from thinking chunk metadata" do
+      {:ok, model} = ReqLLM.model("anthropic:claude-sonnet-4-20250514")
+      context = %ReqLLM.Context{messages: []}
+
+      chunks = [
+        %ReqLLM.StreamChunk{
+          type: :thinking,
+          text: "Deep thought",
+          metadata: %{signature: "sig_abc123"}
+        },
+        ReqLLM.StreamChunk.text("Response")
+      ]
+
+      metadata = %{finish_reason: :stop}
+
+      {:ok, response} =
+        ResponseBuilder.build_response(chunks, metadata, context: context, model: model)
+
+      [detail] = response.message.reasoning_details
+      assert detail.signature == "sig_abc123"
+    end
+
+    test "attaches reasoning_details to context messages" do
+      {:ok, model} = ReqLLM.model("anthropic:claude-sonnet-4-20250514")
+      context = %ReqLLM.Context{messages: []}
+
+      chunks = [
+        ReqLLM.StreamChunk.thinking("Extended reasoning here"),
+        ReqLLM.StreamChunk.text("Final answer")
+      ]
+
+      metadata = %{finish_reason: :stop}
+
+      {:ok, response} =
+        ResponseBuilder.build_response(chunks, metadata, context: context, model: model)
+
+      [context_msg] = response.context.messages
+      assert context_msg.reasoning_details != nil
+      assert length(context_msg.reasoning_details) == 1
+      assert hd(context_msg.reasoning_details).text == "Extended reasoning here"
+    end
+
+    test "ensures non-empty content when tool calls present" do
+      {:ok, model} = ReqLLM.model("anthropic:claude-sonnet-4-20250514")
+      context = %ReqLLM.Context{messages: []}
+
+      chunks = [
+        ReqLLM.StreamChunk.thinking("Planning tool use"),
+        %ReqLLM.StreamChunk{
+          type: :tool_call,
+          name: "get_weather",
+          arguments: %{"location" => "NYC"},
+          metadata: %{id: "call_123", index: 0}
+        }
+      ]
+
+      metadata = %{finish_reason: :tool_calls}
+
+      {:ok, response} =
+        ResponseBuilder.build_response(chunks, metadata, context: context, model: model)
+
+      assert response.message.content != []
+      assert response.message.reasoning_details != nil
+      assert length(response.message.reasoning_details) == 1
+    end
+  end
 end

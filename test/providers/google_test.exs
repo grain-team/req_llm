@@ -1208,4 +1208,202 @@ defmodule ReqLLM.Providers.GoogleTest do
       assert part["text"] =~ "Malformed data URI"
     end
   end
+
+  describe "thought signature support" do
+    test "decode_response extracts reasoning_details from thought parts" do
+      google_response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "parts" => [
+                %{
+                  "text" => "Let me think about this...",
+                  "thought" => true,
+                  "thoughtSignature" => "base64signature123"
+                },
+                %{"text" => "The answer is 42."}
+              ],
+              "role" => "model"
+            },
+            "finishReason" => "STOP"
+          }
+        ],
+        "usageMetadata" => %{
+          "promptTokenCount" => 10,
+          "candidatesTokenCount" => 15,
+          "totalTokenCount" => 25,
+          "thoughtsTokenCount" => 5
+        }
+      }
+
+      mock_resp = %Req.Response{
+        status: 200,
+        body: google_response
+      }
+
+      {:ok, model} = ReqLLM.model("google:gemini-2.5-flash")
+      context = context_fixture()
+
+      mock_req = %Req.Request{
+        options: [context: context, stream: false, model: model.model]
+      }
+
+      {_req, resp} = Google.decode_response({mock_req, mock_resp})
+
+      assert %ReqLLM.Response{} = resp.body
+      response = resp.body
+
+      assert response.message.reasoning_details != nil
+      assert length(response.message.reasoning_details) == 1
+
+      [detail] = response.message.reasoning_details
+      assert %ReqLLM.Message.ReasoningDetails{} = detail
+      assert detail.text == "Let me think about this..."
+      assert detail.signature == "base64signature123"
+      assert detail.encrypted? == true
+      assert detail.provider == :google
+      assert detail.format == "google-gemini-v1"
+      assert detail.index == 0
+      assert detail.provider_data == %{"thought" => true}
+    end
+
+    test "decode_response returns nil reasoning_details when no thought parts" do
+      google_response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "parts" => [%{"text" => "The answer is 42."}],
+              "role" => "model"
+            },
+            "finishReason" => "STOP"
+          }
+        ],
+        "usageMetadata" => %{
+          "promptTokenCount" => 10,
+          "candidatesTokenCount" => 15,
+          "totalTokenCount" => 25
+        }
+      }
+
+      mock_resp = %Req.Response{
+        status: 200,
+        body: google_response
+      }
+
+      {:ok, model} = ReqLLM.model("google:gemini-2.5-flash")
+      context = context_fixture()
+
+      mock_req = %Req.Request{
+        options: [context: context, stream: false, model: model.model]
+      }
+
+      {_req, resp} = Google.decode_response({mock_req, mock_resp})
+
+      assert %ReqLLM.Response{} = resp.body
+      assert resp.body.message.reasoning_details == nil
+    end
+
+    test "encode_body includes thought parts from assistant message reasoning_details" do
+      {:ok, model} = ReqLLM.model("google:gemini-2.5-flash")
+
+      reasoning_detail = %ReqLLM.Message.ReasoningDetails{
+        text: "Let me think step by step...",
+        signature: "signatureABC123",
+        encrypted?: true,
+        provider: :google,
+        format: "google-gemini-v1",
+        index: 0,
+        provider_data: %{"thought" => true}
+      }
+
+      assistant_message = %ReqLLM.Message{
+        role: :assistant,
+        content: [%ReqLLM.Message.ContentPart{type: :text, text: "The answer is 42."}],
+        reasoning_details: [reasoning_detail]
+      }
+
+      user_message = %ReqLLM.Message{
+        role: :user,
+        content: [%ReqLLM.Message.ContentPart{type: :text, text: "What is the answer?"}]
+      }
+
+      context = %ReqLLM.Context{messages: [user_message, assistant_message]}
+
+      mock_request = %Req.Request{
+        options: [
+          context: context,
+          model: model.model,
+          stream: false
+        ]
+      }
+
+      updated_request = Google.encode_body(mock_request)
+      decoded = Jason.decode!(updated_request.body)
+
+      assert is_list(decoded["contents"])
+      assert length(decoded["contents"]) == 2
+
+      [_user_msg, model_msg] = decoded["contents"]
+      assert model_msg["role"] == "model"
+
+      parts = model_msg["parts"]
+      assert length(parts) == 2
+
+      [thought_part, text_part] = parts
+      assert thought_part["thought"] == true
+      assert thought_part["text"] == "Let me think step by step..."
+      assert thought_part["thoughtSignature"] == "signatureABC123"
+
+      assert text_part["text"] == "The answer is 42."
+      refute Map.has_key?(text_part, "thought")
+    end
+
+    test "encode_body skips non-Google reasoning_details with warning" do
+      import ExUnit.CaptureLog
+
+      {:ok, model} = ReqLLM.model("google:gemini-2.5-flash")
+
+      anthropic_detail = %ReqLLM.Message.ReasoningDetails{
+        text: "Anthropic thinking...",
+        signature: "anthropic-sig",
+        encrypted?: false,
+        provider: :anthropic,
+        format: "anthropic-thinking-v1",
+        index: 0,
+        provider_data: %{"type" => "thinking"}
+      }
+
+      assistant_message = %ReqLLM.Message{
+        role: :assistant,
+        content: [%ReqLLM.Message.ContentPart{type: :text, text: "Response"}],
+        reasoning_details: [anthropic_detail]
+      }
+
+      context = %ReqLLM.Context{messages: [assistant_message]}
+
+      mock_request = %Req.Request{
+        options: [
+          context: context,
+          model: model.model,
+          stream: false
+        ]
+      }
+
+      log =
+        capture_log(fn ->
+          updated_request = Google.encode_body(mock_request)
+          decoded = Jason.decode!(updated_request.body)
+
+          [model_msg] = decoded["contents"]
+          parts = model_msg["parts"]
+
+          assert length(parts) == 1
+          [text_part] = parts
+          assert text_part["text"] == "Response"
+          refute Map.has_key?(text_part, "thought")
+        end)
+
+      assert log =~ "Skipping non-Google reasoning detail"
+    end
+  end
 end
