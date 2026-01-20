@@ -1467,19 +1467,13 @@ defmodule ReqLLM.Providers.Google do
     updated_message = %{message | reasoning_details: details}
 
     updated_context =
-      case response.context.messages do
-        [] ->
+      case Enum.split(response.context.messages, -1) do
+        {init, [last]} when is_struct(last, ReqLLM.Message) and last.role == message.role ->
+          updated_last = %{last | reasoning_details: details}
+          %{response.context | messages: init ++ [updated_last]}
+
+        _ ->
           response.context
-
-        msgs ->
-          {init, [last]} = Enum.split(msgs, -1)
-
-          if is_struct(last, ReqLLM.Message) and last.role == message.role do
-            updated_last = %{last | reasoning_details: details}
-            %{response.context | messages: init ++ [updated_last]}
-          else
-            response.context
-          end
       end
 
     %{response | message: updated_message, context: updated_context}
