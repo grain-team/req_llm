@@ -296,6 +296,7 @@ config :req_llm, :sample_embedding_models, ~w(
   )
 config :req_llm, :sample_text_models, ~w(
     anthropic:claude-3-5-haiku-20241022
+    anthropic:claude-haiku-4-5
     openai:gpt-4o-mini
     google:gemini-2.0-flash
   )

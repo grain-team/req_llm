@@ -56,8 +56,8 @@ defmodule ReqLLM.Providers.OpenAI.ResponsesAPI do
   """
   @behaviour ReqLLM.Providers.OpenAI.API
 
-  require ReqLLM.Debug, as: Debug
   require Logger
+  require ReqLLM.Debug, as: Debug
 
   @impl true
   def path, do: "/responses"

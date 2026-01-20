@@ -653,6 +653,8 @@ defmodule ReqLLM.ProviderTest.Comprehensive do
               last = List.last(response.context.messages)
               assert last == response.message
 
+              assert_reasoning_details_if_present(response.message)
+
               context =
                 ReqLLM.Context.new([
                   system(provider_config.reasoning_prompts.streaming_system),
@@ -715,9 +717,36 @@ defmodule ReqLLM.ProviderTest.Comprehensive do
 
               assert %ReqLLM.Response{} = response
               assert response.message.role == :assistant
+
+              assert_reasoning_details_if_present(response.message)
             end
           end
         end
+      end
+
+      defp assert_reasoning_details_if_present(%ReqLLM.Message{reasoning_details: nil}), do: :ok
+      defp assert_reasoning_details_if_present(%ReqLLM.Message{reasoning_details: []}), do: :ok
+
+      defp assert_reasoning_details_if_present(%ReqLLM.Message{reasoning_details: details})
+           when is_list(details) do
+        for {detail, idx} <- Enum.with_index(details) do
+          assert %ReqLLM.Message.ReasoningDetails{} = detail,
+                 "reasoning_details[#{idx}] should be a ReasoningDetails struct, got: #{inspect(detail)}"
+
+          assert detail.provider in [:anthropic, :google, :openai, :openrouter],
+                 "reasoning_details[#{idx}].provider should be a known provider atom, got: #{inspect(detail.provider)}"
+
+          assert is_binary(detail.format) and detail.format != "",
+                 "reasoning_details[#{idx}].format should be a non-empty string, got: #{inspect(detail.format)}"
+
+          assert is_integer(detail.index) and detail.index >= 0,
+                 "reasoning_details[#{idx}].index should be a non-negative integer, got: #{inspect(detail.index)}"
+
+          assert is_boolean(detail.encrypted?),
+                 "reasoning_details[#{idx}].encrypted? should be a boolean, got: #{inspect(detail.encrypted?)}"
+        end
+
+        :ok
       end
     end
   end
