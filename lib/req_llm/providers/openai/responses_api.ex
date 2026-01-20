@@ -240,10 +240,7 @@ defmodule ReqLLM.Providers.OpenAI.ResponsesAPI do
 
             content =
               Enum.flat_map(msg.content, fn part ->
-                case part.type do
-                  :text -> [%{"type" => content_type, "text" => part.text}]
-                  _ -> []
-                end
+                encode_input_content_part(part, content_type)
               end)
 
             if content == [] and msg.tool_calls == nil do
@@ -292,6 +289,7 @@ defmodule ReqLLM.Providers.OpenAI.ResponsesAPI do
 
     tool_choice = encode_tool_choice(opts_map[:tool_choice])
     reasoning = encode_reasoning_effort(opts_map[:reasoning_effort])
+    service_tier = opts_map[:service_tier] || provider_opts[:service_tier]
 
     text_format = encode_text_format(provider_opts[:response_format])
 
@@ -304,6 +302,7 @@ defmodule ReqLLM.Providers.OpenAI.ResponsesAPI do
       |> maybe_put_string("reasoning", reasoning)
       |> maybe_put_string("tools", tools)
       |> maybe_put_string("tool_choice", tool_choice)
+      |> maybe_put_string("service_tier", service_tier)
       |> maybe_put_string("text", text_format)
 
     if previous_response_id do
@@ -312,6 +311,43 @@ defmodule ReqLLM.Providers.OpenAI.ResponsesAPI do
       body
     end
   end
+
+  defp encode_input_content_part(%ReqLLM.Message.ContentPart{type: :text, text: text}, type) do
+    [%{"type" => type, "text" => text}]
+  end
+
+  defp encode_input_content_part(
+         %ReqLLM.Message.ContentPart{type: :image, data: data, media_type: media_type},
+         _type
+       ) do
+    base64 = Base.encode64(data)
+    [%{"type" => "input_image", "image_url" => "data:#{media_type};base64,#{base64}"}]
+  end
+
+  defp encode_input_content_part(%ReqLLM.Message.ContentPart{type: :image_url, url: url}, _type) do
+    [%{"type" => "input_image", "image_url" => url}]
+  end
+
+  defp encode_input_content_part(
+         %ReqLLM.Message.ContentPart{
+           type: :file,
+           data: data,
+           media_type: media_type,
+           filename: filename
+         },
+         _type
+       )
+       when is_binary(data) do
+    base64 = Base.encode64(data)
+
+    file =
+      %{"type" => "input_file", "file_data" => "data:#{media_type};base64,#{base64}"}
+      |> maybe_put_string("filename", filename)
+
+    [file]
+  end
+
+  defp encode_input_content_part(_, _type), do: []
 
   # ========================================================================
 

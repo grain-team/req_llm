@@ -13,14 +13,11 @@ defmodule ReqLLM.Response do
 
       # Basic response usage
       {:ok, response} = ReqLLM.generate_text("anthropic:claude-3-sonnet", context)
-      response.text()  #=> "Hello! I'm Claude."
-      response.usage()  #=> %{input_tokens: 12, output_tokens: 4, total_cost: 0.016}
+      ReqLLM.Response.text(response)  #=> "Hello! I'm Claude."
+      ReqLLM.Response.usage(response)  #=> %{input_tokens: 12, output_tokens: 4, total_cost: 0.016}
 
       # Multi-turn conversation (no manual context building)
       {:ok, response2} = ReqLLM.generate_text("anthropic:claude-3-sonnet", response.context)
-
-      # Tool calling loop
-      {:ok, final_response} = ReqLLM.Response.handle_tools(response, tools)
 
   """
 

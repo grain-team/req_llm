@@ -464,6 +464,42 @@ defmodule ReqLLM.Providers.OpenAITest do
       assert decoded["input"] == "Hello, world!"
       assert decoded["dimensions"] == 512
     end
+
+    test "encode_body includes service_tier when provided" do
+      {:ok, model} = ReqLLM.model("openai:gpt-4o")
+      context = context_fixture()
+
+      mock_request = %Req.Request{
+        options: [
+          context: context,
+          model: model.model,
+          service_tier: "auto"
+        ]
+      }
+
+      updated_request = OpenAI.encode_body(mock_request)
+      decoded = Jason.decode!(updated_request.body)
+
+      assert decoded["service_tier"] == "auto"
+    end
+
+    test "encode_body includes service_tier when provided as flex" do
+      {:ok, model} = ReqLLM.model("openai:gpt-4o")
+      context = context_fixture()
+
+      mock_request = %Req.Request{
+        options: [
+          context: context,
+          model: model.model,
+          service_tier: "flex"
+        ]
+      }
+
+      updated_request = OpenAI.encode_body(mock_request)
+      decoded = Jason.decode!(updated_request.body)
+
+      assert decoded["service_tier"] == "flex"
+    end
   end
 
   describe "response decoding" do
