@@ -1221,4 +1221,166 @@ defmodule ReqLLM.Providers.AzureTest do
     # Req stores JSON body in options[:json] before encoding
     request.options[:json] || %{}
   end
+
+  describe "ResponseBuilder - streaming reasoning_details extraction" do
+    alias ReqLLM.Provider.Defaults.ResponseBuilder
+
+    test "extracts reasoning_details from thinking chunks for OpenAI models" do
+      {:ok, model} = ReqLLM.model("azure:gpt-4o")
+      context = %ReqLLM.Context{messages: []}
+
+      thinking_meta = %{
+        provider: :openai,
+        format: "openai-chat-v1",
+        encrypted?: false,
+        provider_data: %{"type" => "reasoning"}
+      }
+
+      chunks = [
+        ReqLLM.StreamChunk.thinking("Step 1: Analyze the problem", thinking_meta),
+        ReqLLM.StreamChunk.thinking("Step 2: Consider solutions", thinking_meta),
+        ReqLLM.StreamChunk.text("The answer is 42.")
+      ]
+
+      metadata = %{finish_reason: :stop}
+
+      {:ok, response} =
+        ResponseBuilder.build_response(chunks, metadata, context: context, model: model)
+
+      assert response.message.reasoning_details != nil
+      assert length(response.message.reasoning_details) == 2
+
+      [first, second] = response.message.reasoning_details
+      assert %ReqLLM.Message.ReasoningDetails{} = first
+      assert first.text == "Step 1: Analyze the problem"
+      assert first.provider == :openai
+      assert first.format == "openai-chat-v1"
+      assert first.index == 0
+
+      assert second.text == "Step 2: Consider solutions"
+      assert second.index == 1
+    end
+
+    test "extracts reasoning_details from thinking chunks for Claude models on Azure" do
+      model = %LLMDB.Model{
+        id: "claude-3-5-sonnet-20241022",
+        provider: :azure,
+        capabilities: %{chat: true}
+      }
+
+      context = %ReqLLM.Context{messages: []}
+
+      thinking_meta = %{
+        provider: :anthropic,
+        format: "anthropic-thinking-v1",
+        encrypted?: false,
+        provider_data: %{"type" => "thinking"}
+      }
+
+      chunks = [
+        ReqLLM.StreamChunk.thinking("Let me think through this", thinking_meta),
+        ReqLLM.StreamChunk.text("Here is my answer.")
+      ]
+
+      metadata = %{finish_reason: :stop}
+
+      {:ok, response} =
+        ResponseBuilder.build_response(chunks, metadata, context: context, model: model)
+
+      assert response.message.reasoning_details != nil
+      assert length(response.message.reasoning_details) == 1
+
+      [first] = response.message.reasoning_details
+      assert first.text == "Let me think through this"
+      assert first.provider == :anthropic
+      assert first.format == "anthropic-thinking-v1"
+      assert first.index == 0
+    end
+
+    test "returns nil reasoning_details when no thinking chunks" do
+      {:ok, model} = ReqLLM.model("azure:gpt-4o")
+      context = %ReqLLM.Context{messages: []}
+
+      chunks = [
+        ReqLLM.StreamChunk.text("Just a simple response.")
+      ]
+
+      metadata = %{finish_reason: :stop}
+
+      {:ok, response} =
+        ResponseBuilder.build_response(chunks, metadata, context: context, model: model)
+
+      assert response.message.reasoning_details == nil
+    end
+  end
+
+  describe "Sync flow - reasoning_details extraction" do
+    alias ReqLLM.Providers.Azure.Anthropic, as: AzureAnthropic
+
+    test "extracts reasoning_details from Claude response on Azure (sync flow)" do
+      model = %LLMDB.Model{
+        id: "claude-3-5-sonnet-20241022",
+        provider: :azure,
+        capabilities: %{chat: true}
+      }
+
+      anthropic_response_body = %{
+        "id" => "msg_01XFDUDYJgAACzvnptvVoYEL",
+        "type" => "message",
+        "role" => "assistant",
+        "model" => "claude-3-5-sonnet-20241022",
+        "content" => [
+          %{"type" => "thinking", "thinking" => "Let me analyze this step by step"},
+          %{"type" => "thinking", "thinking" => "Considering the options"},
+          %{"type" => "text", "text" => "Here is my answer."}
+        ],
+        "stop_reason" => "end_turn",
+        "usage" => %{
+          "input_tokens" => 10,
+          "output_tokens" => 50
+        }
+      }
+
+      {:ok, response} = AzureAnthropic.parse_response(anthropic_response_body, model, [])
+
+      assert response.message.reasoning_details != nil
+      assert length(response.message.reasoning_details) == 2
+
+      [first, second] = response.message.reasoning_details
+      assert first.text == "Let me analyze this step by step"
+      assert first.provider == :anthropic
+      assert first.format == "anthropic-thinking-v1"
+      assert first.index == 0
+
+      assert second.text == "Considering the options"
+      assert second.index == 1
+    end
+
+    test "returns nil reasoning_details when no thinking content (sync flow)" do
+      model = %LLMDB.Model{
+        id: "claude-3-5-sonnet-20241022",
+        provider: :azure,
+        capabilities: %{chat: true}
+      }
+
+      anthropic_response_body = %{
+        "id" => "msg_01XFDUDYJgAACzvnptvVoYEL",
+        "type" => "message",
+        "role" => "assistant",
+        "model" => "claude-3-5-sonnet-20241022",
+        "content" => [
+          %{"type" => "text", "text" => "Just a simple response."}
+        ],
+        "stop_reason" => "end_turn",
+        "usage" => %{
+          "input_tokens" => 10,
+          "output_tokens" => 20
+        }
+      }
+
+      {:ok, response} = AzureAnthropic.parse_response(anthropic_response_body, model, [])
+
+      assert response.message.reasoning_details == nil
+    end
+  end
 end

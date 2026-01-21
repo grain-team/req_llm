@@ -34,7 +34,7 @@ defmodule ReqLLM.Providers.Venice do
       ReqLLM.generate_text("venice:llama-3.3-70b", "Hello!")
 
       # With web search enabled
-      ReqLLM.generate_text("venice:zai-org-glm-4.6", "What happened today?",
+      ReqLLM.generate_text("venice:zai-org-glm-4.7", "What happened today?",
         provider_options: [enable_web_search: "on"]
       )
 

@@ -34,6 +34,8 @@ defmodule ReqLLM.Providers.Anthropic.Context do
 
   alias ReqLLM.ToolCall
 
+  require Logger
+
   @doc """
   Encode context and model to Anthropic Messages API format.
   """
@@ -102,14 +104,35 @@ defmodule ReqLLM.Providers.Anthropic.Context do
 
   defp all_tool_results?(_), do: false
 
-  defp encode_message(%ReqLLM.Message{role: :assistant, tool_calls: tool_calls, content: content})
+  defp encode_message(%ReqLLM.Message{
+         role: :assistant,
+         tool_calls: tool_calls,
+         content: content,
+         reasoning_details: reasoning_details
+       })
        when is_list(tool_calls) and tool_calls != [] do
+    thinking_blocks = encode_reasoning_details(reasoning_details)
     text_blocks = encode_content(content)
     tool_blocks = Enum.map(tool_calls, &encode_tool_call_to_tool_use/1)
 
     %{
       role: "assistant",
-      content: combine_content_blocks(text_blocks, tool_blocks)
+      content: combine_all_content_blocks(thinking_blocks, text_blocks, tool_blocks)
+    }
+  end
+
+  defp encode_message(%ReqLLM.Message{
+         role: :assistant,
+         content: content,
+         reasoning_details: reasoning_details
+       })
+       when is_list(reasoning_details) and reasoning_details != [] do
+    thinking_blocks = encode_reasoning_details(reasoning_details)
+    text_blocks = encode_content(content)
+
+    %{
+      role: "assistant",
+      content: combine_all_content_blocks(thinking_blocks, text_blocks, [])
     }
   end
 
@@ -222,15 +245,43 @@ defmodule ReqLLM.Providers.Anthropic.Context do
   defp decode_tool_arguments(args) when is_map(args), do: args
   defp decode_tool_arguments(nil), do: %{}
 
-  defp combine_content_blocks(text_blocks, tool_blocks) when is_list(text_blocks) do
-    text_blocks ++ tool_blocks
+  defp combine_all_content_blocks(thinking_blocks, text_blocks, tool_blocks)
+       when is_list(text_blocks) do
+    thinking_blocks ++ text_blocks ++ tool_blocks
   end
 
-  defp combine_content_blocks("", tool_blocks), do: tool_blocks
-
-  defp combine_content_blocks(text_string, tool_blocks) when is_binary(text_string) do
-    [%{type: "text", text: text_string}] ++ tool_blocks
+  defp combine_all_content_blocks(thinking_blocks, "", tool_blocks) do
+    thinking_blocks ++ tool_blocks
   end
+
+  defp combine_all_content_blocks(thinking_blocks, text_string, tool_blocks)
+       when is_binary(text_string) do
+    thinking_blocks ++ [%{type: "text", text: text_string}] ++ tool_blocks
+  end
+
+  defp encode_reasoning_details(nil), do: []
+  defp encode_reasoning_details([]), do: []
+
+  defp encode_reasoning_details(details) when is_list(details) do
+    details
+    |> Enum.sort_by(& &1.index)
+    |> Enum.flat_map(&encode_single_reasoning_detail/1)
+  end
+
+  defp encode_single_reasoning_detail(
+         %ReqLLM.Message.ReasoningDetails{provider: :anthropic} = detail
+       ) do
+    block = %{type: "thinking", thinking: detail.text || ""}
+    block = if detail.signature, do: Map.put(block, :signature, detail.signature), else: block
+    [block]
+  end
+
+  defp encode_single_reasoning_detail(%ReqLLM.Message.ReasoningDetails{provider: provider}) do
+    Logger.debug("Skipping non-Anthropic reasoning detail from provider: #{inspect(provider)}")
+    []
+  end
+
+  defp encode_single_reasoning_detail(_), do: []
 
   defp extract_text_content(content_parts) when is_list(content_parts) do
     content_parts

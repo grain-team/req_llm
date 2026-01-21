@@ -1094,24 +1094,27 @@ defmodule ReqLLM.Providers.Google do
 
             body = ensure_parsed_body(resp.body)
 
-            # Extract grounding metadata before format conversion to avoid duplication
             grounding_metadata = extract_grounding_metadata(body)
 
             openai_format = convert_google_to_openai_format(body)
 
+            reasoning_details = extract_reasoning_details_from_openai_format(openai_format)
+
             {:ok, response} =
               ReqLLM.Provider.Defaults.decode_response_body_openai_format(openai_format, model)
 
-            # Add grounding metadata to provider_meta["google"] if present
+            response_with_reasoning = attach_reasoning_details(response, reasoning_details)
+
             response_with_grounding =
               case grounding_metadata do
                 nil ->
-                  response
+                  response_with_reasoning
 
                 grounding_data ->
                   %{
-                    response
-                    | provider_meta: Map.put(response.provider_meta, "google", grounding_data)
+                    response_with_reasoning
+                    | provider_meta:
+                        Map.put(response_with_reasoning.provider_meta, "google", grounding_data)
                   }
               end
 
@@ -1294,6 +1297,7 @@ defmodule ReqLLM.Providers.Google do
         %{"content" => %{"parts" => parts}} = candidate ->
           {content_parts, has_thinking?} = convert_google_parts_to_content(parts)
           tool_calls = extract_tool_calls(parts)
+          reasoning_details = extract_reasoning_details_from_parts(parts)
 
           message =
             if has_thinking? or tool_calls != [] do
@@ -1319,8 +1323,12 @@ defmodule ReqLLM.Providers.Google do
               _ -> Map.put(message, "tool_calls", tool_calls)
             end
 
-          # Google returns "STOP" even when there are function calls
-          # Override to "tool_calls" when function calls are present
+          message =
+            case reasoning_details do
+              [] -> message
+              details -> Map.put(message, "reasoning_details", details)
+            end
+
           finish_reason =
             case {tool_calls, candidate["finishReason"]} do
               {[_ | _], "STOP"} -> "tool_calls"
@@ -1424,6 +1432,54 @@ defmodule ReqLLM.Providers.Google do
       }
     end
   end
+
+  defp extract_reasoning_details_from_parts(parts) do
+    parts
+    |> Enum.filter(&(Map.get(&1, "thought", false) == true))
+    |> Enum.with_index()
+    |> Enum.map(fn {part, index} ->
+      %ReqLLM.Message.ReasoningDetails{
+        text: part["text"],
+        signature: part["thoughtSignature"],
+        encrypted?: part["thoughtSignature"] != nil,
+        provider: :google,
+        format: "google-gemini-v1",
+        index: index,
+        provider_data: %{"thought" => true}
+      }
+    end)
+  end
+
+  defp extract_reasoning_details_from_openai_format(%{"choices" => [first_choice | _]}) do
+    case first_choice do
+      %{"message" => %{"reasoning_details" => details}} when is_list(details) -> details
+      _ -> nil
+    end
+  end
+
+  defp extract_reasoning_details_from_openai_format(_), do: nil
+
+  defp attach_reasoning_details(response, nil), do: response
+  defp attach_reasoning_details(response, []), do: response
+
+  defp attach_reasoning_details(%ReqLLM.Response{message: message} = response, details)
+       when message != nil do
+    updated_message = %{message | reasoning_details: details}
+
+    updated_context =
+      case Enum.split(response.context.messages, -1) do
+        {init, [last]} when is_struct(last, ReqLLM.Message) and last.role == message.role ->
+          updated_last = %{last | reasoning_details: details}
+          %{response.context | messages: init ++ [updated_last]}
+
+        _ ->
+          response.context
+      end
+
+    %{response | message: updated_message, context: updated_context}
+  end
+
+  defp attach_reasoning_details(response, _details), do: response
 
   defp normalize_google_finish_reason("STOP"), do: "stop"
   defp normalize_google_finish_reason("MAX_TOKENS"), do: "length"
@@ -1627,6 +1683,8 @@ defmodule ReqLLM.Providers.Google do
           _ -> ""
         end
 
+      thought_parts = encode_reasoning_details_for_gemini(message)
+
       content_parts =
         case raw_content do
           content when is_binary(content) -> [%{text: content}]
@@ -1671,11 +1729,48 @@ defmodule ReqLLM.Providers.Google do
             []
         end
 
-      parts = content_parts ++ tool_call_parts ++ tool_result_parts
+      parts = thought_parts ++ content_parts ++ tool_call_parts ++ tool_result_parts
 
       %{role: role, parts: parts}
     end)
   end
+
+  defp encode_reasoning_details_for_gemini(message) do
+    reasoning_details =
+      case message do
+        %{reasoning_details: details} when is_list(details) and details != [] -> details
+        %{"reasoning_details" => details} when is_list(details) and details != [] -> details
+        _ -> nil
+      end
+
+    case reasoning_details do
+      nil ->
+        []
+
+      details ->
+        details
+        |> Enum.sort_by(& &1.index)
+        |> Enum.flat_map(&encode_single_google_reasoning_detail/1)
+    end
+  end
+
+  defp encode_single_google_reasoning_detail(
+         %ReqLLM.Message.ReasoningDetails{provider: :google} = detail
+       ) do
+    part = %{text: detail.text || "", thought: true}
+    part = if detail.signature, do: Map.put(part, :thoughtSignature, detail.signature), else: part
+    [part]
+  end
+
+  defp encode_single_google_reasoning_detail(%ReqLLM.Message.ReasoningDetails{provider: provider}) do
+    Logger.debug(
+      "Skipping non-Google reasoning detail from provider: #{inspect(provider)} in Google request"
+    )
+
+    []
+  end
+
+  defp encode_single_google_reasoning_detail(_), do: []
 
   defp convert_tool_call_to_function_call(%ReqLLM.ToolCall{
          type: "function",
@@ -1938,7 +2033,9 @@ defmodule ReqLLM.Providers.Google do
             []
           else
             if Map.get(part, "thought", false) do
-              [ReqLLM.StreamChunk.thinking(text)]
+              signature = Map.get(part, "thoughtSignature")
+              meta = if signature, do: %{signature: signature}, else: %{}
+              [ReqLLM.StreamChunk.thinking(text, meta)]
             else
               [ReqLLM.StreamChunk.text(text)]
             end
