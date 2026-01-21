@@ -39,6 +39,7 @@ defmodule ReqLLM.MixProject do
           "CHANGELOG.md",
           "CONTRIBUTING.md",
           "guides/getting-started.md",
+          "guides/configuration.md",
           "guides/core-concepts.md",
           "guides/data-structures.md",
           "guides/model-metadata.md",
@@ -64,6 +65,7 @@ defmodule ReqLLM.MixProject do
           ],
           Guides: [
             "guides/getting-started.md",
+            "guides/configuration.md",
             "guides/core-concepts.md",
             "guides/data-structures.md",
             "guides/model-metadata.md"

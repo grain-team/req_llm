@@ -302,6 +302,7 @@ This approach gives you full control over the Req pipeline, allowing you to add 
 ## Documentation
 
 - [Getting Started](guides/getting-started.md) – first call and basic concepts
+- [Configuration](guides/configuration.md) – timeouts, connection pools, and global settings
 - [Core Concepts](guides/core-concepts.md) – architecture & data model
 - [Data Structures](guides/data-structures.md) – detailed type information
 - [Mix Tasks](guides/mix-tasks.md) – model sync, compatibility testing, code generation
