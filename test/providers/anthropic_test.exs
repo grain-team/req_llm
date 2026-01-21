@@ -831,7 +831,7 @@ defmodule ReqLLM.Providers.AnthropicTest do
       [detail] = response.message.reasoning_details
       assert detail.text == "Let me analyze this step by step..."
       assert detail.signature == "EqQBtest123"
-      assert detail.encrypted? == false
+      assert detail.encrypted? == true
       assert detail.provider == :anthropic
       assert detail.format == "anthropic-thinking-v1"
       assert detail.index == 0

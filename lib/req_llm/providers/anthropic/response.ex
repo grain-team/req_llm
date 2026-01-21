@@ -241,10 +241,12 @@ defmodule ReqLLM.Providers.Anthropic.Response do
     |> Enum.filter(&(&1.type == :thinking))
     |> Enum.with_index()
     |> Enum.map(fn {chunk, index} ->
+      sig = Map.get(chunk.metadata, :signature)
+
       %ReqLLM.Message.ReasoningDetails{
         text: chunk.text,
-        signature: Map.get(chunk.metadata, :signature),
-        encrypted?: false,
+        signature: sig,
+        encrypted?: sig != nil,
         provider: :anthropic,
         format: "anthropic-thinking-v1",
         index: index,
