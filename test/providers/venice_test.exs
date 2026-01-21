@@ -300,7 +300,7 @@ defmodule ReqLLM.Providers.VeniceTest do
     end
 
     test "encode_body with tools" do
-      {:ok, model} = ReqLLM.model("venice:zai-org-glm-4.6")
+      {:ok, model} = ReqLLM.model("venice:zai-org-glm-4.7")
       context = context_fixture()
 
       tool =
@@ -330,7 +330,7 @@ defmodule ReqLLM.Providers.VeniceTest do
     end
 
     test "encode_body with both tools and venice_parameters" do
-      {:ok, model} = ReqLLM.model("venice:zai-org-glm-4.6")
+      {:ok, model} = ReqLLM.model("venice:zai-org-glm-4.7")
       context = context_fixture()
 
       tool =
@@ -500,9 +500,9 @@ defmodule ReqLLM.Providers.VeniceTest do
       assert model.provider == :venice
       assert model.id == "venice-uncensored"
 
-      {:ok, model2} = ReqLLM.model("venice:zai-org-glm-4.6")
+      {:ok, model2} = ReqLLM.model("venice:zai-org-glm-4.7")
       assert model2.provider == :venice
-      assert model2.id == "zai-org-glm-4.6"
+      assert model2.id == "zai-org-glm-4.7"
     end
   end
 
