@@ -343,6 +343,7 @@ defmodule ReqLLM.Provider.Defaults do
   @spec filter_req_opts(keyword()) :: keyword()
   def filter_req_opts(opts) do
     internal_keys = [
+      :api_key,
       :on_unsupported,
       :context,
       :text,
