@@ -178,6 +178,7 @@ defmodule ReqLLM.Embedding do
          :ok <- validate_input(text),
          {:ok, provider_module} <- ReqLLM.provider(model.provider),
          {:ok, request} <- provider_module.prepare_request(:embedding, model, text, opts),
+         {:ok, request} <- ReqLLM.Provider.Defaults.apply_req_plugins(request, opts),
          {:ok, %Req.Response{status: status, body: decoded_response}} when status in 200..299 <-
            Req.request(request) do
       extract_single_embedding(decoded_response)
@@ -200,6 +201,7 @@ defmodule ReqLLM.Embedding do
          :ok <- validate_input(texts),
          {:ok, provider_module} <- ReqLLM.provider(model.provider),
          {:ok, request} <- provider_module.prepare_request(:embedding, model, texts, opts),
+         {:ok, request} <- ReqLLM.Provider.Defaults.apply_req_plugins(request, opts),
          {:ok, %Req.Response{status: status, body: decoded_response}} when status in 200..299 <-
            Req.request(request) do
       extract_multiple_embeddings(decoded_response)

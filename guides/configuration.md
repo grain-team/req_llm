@@ -150,6 +150,78 @@ config :req_llm,
 {:ok, response} = ReqLLM.stream_text(model, messages, finch_name: MyApp.CustomFinch)
 ```
 
+## Req Plugins
+
+ReqLLM builds a `Req.Request` struct internally for each operation. The `:req_plugins` option lets you inject custom middleware into this request before it's sent, enabling custom headers, logging, metrics, retries, or any other `Req` step.
+
+Each plugin is a function `(Req.Request.t() -> Req.Request.t())` applied in order. If a plugin raises, the operation returns `{:error, ...}` without sending the request.
+
+### Adding Custom Headers
+
+```elixir
+ReqLLM.generate_text("openai:gpt-4o", "Hello",
+  req_plugins: [
+    fn req -> Req.Request.put_header(req, "x-request-id", UUID.uuid4()) end
+  ]
+)
+```
+
+### Composing Multiple Plugins
+
+Plugins are applied left to right:
+
+```elixir
+auth_plugin = fn req ->
+  Req.Request.put_header(req, "x-custom-auth", "Bearer #{my_token()}")
+end
+
+logging_plugin = fn req ->
+  Logger.info("Sending request to #{req.url}")
+  req
+end
+
+ReqLLM.generate_text("openai:gpt-4o", messages,
+  req_plugins: [auth_plugin, logging_plugin]
+)
+```
+
+### Reusable Plugin Modules
+
+For plugins shared across your application, define a module:
+
+```elixir
+defmodule MyApp.ReqPlugins do
+  def request_id(req) do
+    Req.Request.put_header(req, "x-request-id", UUID.uuid4())
+  end
+
+  def telemetry(req) do
+    Req.Request.register_options(req, [:telemetry_metadata])
+    Req.Request.append_request_steps(req, telemetry: &emit_start/1)
+  end
+
+  defp emit_start(req) do
+    :telemetry.execute([:my_app, :llm, :request], %{}, %{url: req.url})
+    req
+  end
+end
+
+ReqLLM.generate_text("openai:gpt-4o", messages,
+  req_plugins: [&MyApp.ReqPlugins.request_id/1, &MyApp.ReqPlugins.telemetry/1]
+)
+```
+
+### Supported Operations
+
+The `:req_plugins` option works with all non-streaming operations:
+
+- `ReqLLM.generate_text/3`
+- `ReqLLM.generate_object/4`
+- `ReqLLM.embed/3` (single and batch)
+- `ReqLLM.generate_image/3`
+
+Streaming operations (`stream_text/3`) build their requests through a different pipeline and do not currently support `:req_plugins`.
+
 ## API Key Configuration
 
 Keys are loaded with clear precedence: per-request → in-memory → app config → env vars → .env files.
