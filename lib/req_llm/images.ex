@@ -112,6 +112,7 @@ defmodule ReqLLM.Images do
          {:ok, provider_module} <- ReqLLM.provider(model.provider),
          {:ok, request} <-
            provider_module.prepare_request(:image, model, prompt_or_messages, opts),
+         {:ok, request} <- ReqLLM.Provider.Defaults.apply_req_plugins(request, opts),
          {:ok, %Req.Response{status: status, body: response}} when status in 200..299 <-
            Req.request(request) do
       {:ok, response}

@@ -171,6 +171,7 @@ defmodule ReqLLM.Provider.Options do
     :on_unsupported,
     :fixture,
     :req_http_options,
+    :req_plugins,
     :compiled_schema,
     :operation,
     :text,
