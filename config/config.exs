@@ -99,7 +99,25 @@ if System.get_env("REQ_LLM_DEBUG") in ~w(1 true yes on) do
   config :req_llm, :debug, true
 end
 
-# Git hooks and git_ops configuration for conventional commits
+# git_ops configuration for conventional commits (must be available in all envs for CI release)
+config :git_ops,
+  mix_project: ReqLLM.MixProject,
+  changelog_file: "CHANGELOG.md",
+  repository_url: "https://github.com/agentjido/req_llm",
+  manage_mix_version?: true,
+  version_tag_prefix: "v",
+  types: [
+    feat: [header: "Features"],
+    fix: [header: "Bug Fixes"],
+    perf: [header: "Performance"],
+    refactor: [header: "Refactoring"],
+    docs: [hidden?: true],
+    test: [hidden?: true],
+    chore: [hidden?: true],
+    ci: [hidden?: true]
+  ]
+
+# Git hooks for conventional commits (dev only)
 if config_env() == :dev do
   config :git_hooks,
     auto_install: true,
@@ -110,23 +128,6 @@ if config_env() == :dev do
           {:cmd, "mix git_ops.check_message", include_hook_args: true}
         ]
       ]
-    ]
-
-  config :git_ops,
-    mix_project: ReqLLM.MixProject,
-    changelog_file: "CHANGELOG.md",
-    repository_url: "https://github.com/agentjido/req_llm",
-    manage_mix_version?: true,
-    version_tag_prefix: "v",
-    types: [
-      feat: [header: "Features"],
-      fix: [header: "Bug Fixes"],
-      perf: [header: "Performance"],
-      refactor: [header: "Refactoring"],
-      docs: [hidden?: true],
-      test: [hidden?: true],
-      chore: [hidden?: true],
-      ci: [hidden?: true]
     ]
 end
 
