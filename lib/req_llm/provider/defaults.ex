@@ -368,10 +368,47 @@ defmodule ReqLLM.Provider.Defaults do
       :operation,
       :receive_timeout,
       :max_retries,
-      :req_http_options
+      :req_http_options,
+      :req_plugins
     ]
 
     Keyword.drop(opts, internal_keys)
+  end
+
+  @doc """
+  Applies user-provided Req plugins to a built request.
+
+  Each plugin is a function `(Req.Request.t() -> Req.Request.t())` applied in order.
+  A crashing plugin returns `{:error, ...}` rather than propagating the exception.
+  """
+  @spec apply_req_plugins(Req.Request.t(), keyword()) ::
+          {:ok, Req.Request.t()} | {:error, Exception.t()}
+  def apply_req_plugins(request, opts) do
+    plugins = Keyword.get(opts, :req_plugins, [])
+
+    result =
+      Enum.reduce_while(plugins, request, fn plugin, req ->
+        try do
+          {:cont, plugin.(req)}
+        rescue
+          error ->
+            {:halt, {:error, error, plugin}}
+        end
+      end)
+
+    case result do
+      {:error, error, plugin} ->
+        {:error,
+         ReqLLM.Error.Unknown.Unknown.exception(
+           error:
+             RuntimeError.exception(
+               "Req plugin #{inspect(plugin)} failed: #{Exception.message(error)}"
+             )
+         )}
+
+      %Req.Request{} = req ->
+        {:ok, req}
+    end
   end
 
   @spec default_attach(module(), Req.Request.t(), term(), keyword()) :: Req.Request.t()
@@ -424,6 +461,7 @@ defmodule ReqLLM.Provider.Defaults do
         :tools,
         :tool_choice,
         :req_http_options,
+        :req_plugins,
         :stream,
         :frequency_penalty,
         :system_prompt,

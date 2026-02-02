@@ -73,6 +73,7 @@ defmodule ReqLLM.Generation do
     with {:ok, model} <- ReqLLM.model(model_spec),
          {:ok, provider_module} <- ReqLLM.provider(model.provider),
          {:ok, request} <- provider_module.prepare_request(:chat, model, messages, opts),
+         {:ok, request} <- ReqLLM.Provider.Defaults.apply_req_plugins(request, opts),
          {:ok, %Req.Response{status: status, body: decoded_response}} when status in 200..299 <-
            Req.request(request) do
       {:ok, decoded_response}
@@ -238,6 +239,7 @@ defmodule ReqLLM.Generation do
          opts_with_schema = Keyword.put(opts, :compiled_schema, compiled_schema),
          {:ok, request} <-
            provider_module.prepare_request(:object, model, messages, opts_with_schema),
+         {:ok, request} <- ReqLLM.Provider.Defaults.apply_req_plugins(request, opts),
          {:ok, %Req.Response{status: status, body: decoded_response}} when status in 200..299 <-
            Req.request(request) do
       # For models with json.strict = false, coerce response types to match schema
