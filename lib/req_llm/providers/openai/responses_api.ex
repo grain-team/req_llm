@@ -946,17 +946,23 @@ defmodule ReqLLM.Providers.OpenAI.ResponsesAPI do
     end
   end
 
-  defp encode_tool_for_responses_api(%ReqLLM.Tool{} = tool) do
+  defp encode_tool_for_responses_api(%ReqLLM.Tool{strict: strict} = tool) do
     schema = ReqLLM.Tool.to_schema(tool)
     function_def = schema["function"]
-    params = normalize_parameters_for_strict(function_def["parameters"])
+
+    params =
+      if strict do
+        normalize_parameters_for_strict(function_def["parameters"])
+      else
+        normalize_parameters(function_def["parameters"])
+      end
 
     %{
       "type" => "function",
       "name" => function_def["name"],
       "description" => function_def["description"],
       "parameters" => params,
-      "strict" => true
+      "strict" => strict
     }
   end
 
@@ -1022,6 +1028,24 @@ defmodule ReqLLM.Providers.OpenAI.ResponsesAPI do
       "type" => "object",
       "properties" => stringify_keys(properties),
       "required" => all_property_names,
+      "additionalProperties" => false
+    }
+  end
+
+  defp normalize_parameters(nil) do
+    %{
+      "type" => "object",
+      "properties" => %{},
+      "additionalProperties" => false
+    }
+  end
+
+  defp normalize_parameters(params) when is_map(params) do
+    properties = params[:properties] || params["properties"] || %{}
+
+    %{
+      "type" => "object",
+      "properties" => stringify_keys(properties),
       "additionalProperties" => false
     }
   end
