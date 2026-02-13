@@ -253,6 +253,64 @@ defmodule ReqLLM.Providers.AmazonBedrockTest do
     end
   end
 
+  describe "decode_stream_event/2" do
+    test "decodes native Anthropic events for inference profile models" do
+      # Inference profile models (global.*) may use InvokeModel API which returns
+      # native Anthropic event format, not Converse format
+      model =
+        LLMDB.Model.new!(%{
+          id: "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+          provider: :amazon_bedrock
+        })
+
+      # Native Anthropic event from InvokeModel API
+      event = %{
+        "type" => "content_block_delta",
+        "index" => 0,
+        "delta" => %{"type" => "text_delta", "text" => "Hello"}
+      }
+
+      chunks = AmazonBedrock.decode_stream_event(event, model)
+      assert [%ReqLLM.StreamChunk{type: :content, text: "Hello"}] = chunks
+    end
+
+    test "decodes Converse events for inference profile models" do
+      model =
+        LLMDB.Model.new!(%{
+          id: "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+          provider: :amazon_bedrock
+        })
+
+      # Converse API event format
+      event = %{
+        "contentBlockDelta" => %{
+          "contentBlockIndex" => 0,
+          "delta" => %{"text" => "Hello"}
+        }
+      }
+
+      chunks = AmazonBedrock.decode_stream_event(event, model)
+      assert [%ReqLLM.StreamChunk{type: :content, text: "Hello"}] = chunks
+    end
+
+    test "decodes native events for non-inference-profile models" do
+      model =
+        LLMDB.Model.new!(%{
+          id: "anthropic.claude-3-haiku-20240307-v1:0",
+          provider: :amazon_bedrock
+        })
+
+      event = %{
+        "type" => "content_block_delta",
+        "index" => 0,
+        "delta" => %{"type" => "text_delta", "text" => "World"}
+      }
+
+      chunks = AmazonBedrock.decode_stream_event(event, model)
+      assert [%ReqLLM.StreamChunk{type: :content, text: "World"}] = chunks
+    end
+  end
+
   describe "AWS session token support" do
     test "includes session token in signed Req request headers" do
       # Test non-streaming path (Req pipeline via put_aws_sigv4)

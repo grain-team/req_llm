@@ -621,18 +621,19 @@ defmodule ReqLLM.Providers.AmazonBedrock do
     # Decode AWS event stream events into StreamChunks
     # This is called after parse_stream_protocol returns events
     #
-    # IMPORTANT: For inference profiles, we need to route to the Converse formatter
-    # because those models MUST use Converse API, which produces events in Converse format.
-    # The model family alone isn't sufficient - we need to check if this is an inference profile.
-    # Use provider_model_id (the API ID) not the canonical ID to check for inference profile
+    # Detect the correct formatter from the event format rather than assuming
+    # based on model ID. The request path (attach_stream) decides whether to use
+    # Converse or InvokeModel API via determine_use_converse/2, but that context
+    # isn't available here. Instead, detect from the event structure:
+    #
+    # - Converse API events use camelCase keys: "contentBlockDelta", "messageStart", etc.
+    # - InvokeModel/native API events use "type" field: "content_block_delta", "message_start", etc.
     model_id = model.provider_model_id || model.id
 
     formatter =
-      if is_inference_profile_model?(model_id) do
-        # Inference profiles use Converse API, so use Converse formatter
+      if converse_event?(event) do
         ReqLLM.Providers.AmazonBedrock.Converse
       else
-        # Non-inference-profile models: use model family formatter
         model_family = get_model_family(model_id)
         get_formatter_module(model_family)
       end
@@ -689,8 +690,11 @@ defmodule ReqLLM.Providers.AmazonBedrock do
     end
   end
 
-  defp is_inference_profile_model?(model_id) when is_binary(model_id) do
-    String.starts_with?(model_id, ["us.", "eu.", "ap.", "ca.", "global."])
+  # Detect whether a streaming event is from the Converse API (camelCase keys)
+  # vs InvokeModel/native API (which uses "type" field with snake_case values).
+  @converse_event_keys ~w(contentBlockDelta contentBlockStart contentBlockStop messageStart messageStop metadata)
+  defp converse_event?(event) when is_map(event) do
+    Enum.any?(@converse_event_keys, &Map.has_key?(event, &1))
   end
 
   @impl ReqLLM.Provider
