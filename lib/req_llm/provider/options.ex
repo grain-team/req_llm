@@ -295,6 +295,7 @@ defmodule ReqLLM.Provider.Options do
   end
 
   defp base_schema_for_operation(:image), do: ReqLLM.Images.schema()
+  defp base_schema_for_operation(:embedding), do: ReqLLM.Embedding.schema()
   defp base_schema_for_operation(_operation), do: @generation_options_schema
 
   @doc """
