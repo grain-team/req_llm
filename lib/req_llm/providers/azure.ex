@@ -14,6 +14,11 @@ defmodule ReqLLM.Providers.Azure do
   - Claude 3.5 Sonnet
   - Extended thinking/reasoning support
 
+  ### xAI Grok Models
+  - Grok-3, Grok-3 Mini
+  - Grok-4
+  - Reasoning effort support (grok-3-mini)
+
   ## Capabilities
 
   - Text generation (chat completions / messages)
@@ -265,7 +270,8 @@ defmodule ReqLLM.Providers.Azure do
     "o4" => __MODULE__.OpenAI,
     "deepseek" => __MODULE__.OpenAI,
     "mai-ds" => __MODULE__.OpenAI,
-    "claude" => __MODULE__.Anthropic
+    "claude" => __MODULE__.Anthropic,
+    "grok" => __MODULE__.Grok
   }
 
   @model_family_prefixes @model_families |> Map.keys() |> Enum.sort_by(&String.length/1, :desc)
@@ -283,7 +289,8 @@ defmodule ReqLLM.Providers.Azure do
     "o3" => "AZURE_OPENAI_BASE_URL",
     "o4" => "AZURE_OPENAI_BASE_URL",
     "deepseek" => "AZURE_DEEPSEEK_BASE_URL",
-    "mai-ds" => "AZURE_MAI_BASE_URL"
+    "mai-ds" => "AZURE_MAI_BASE_URL",
+    "grok" => "AZURE_GROK_BASE_URL"
   }
 
   @family_api_key_env_vars %{
@@ -295,7 +302,8 @@ defmodule ReqLLM.Providers.Azure do
     "o3" => "AZURE_OPENAI_API_KEY",
     "o4" => "AZURE_OPENAI_API_KEY",
     "deepseek" => "AZURE_DEEPSEEK_API_KEY",
-    "mai-ds" => "AZURE_MAI_API_KEY"
+    "mai-ds" => "AZURE_MAI_API_KEY",
+    "grok" => "AZURE_GROK_API_KEY"
   }
 
   @doc """
@@ -761,6 +769,10 @@ defmodule ReqLLM.Providers.Azure do
         synthetic_model = %{model | provider: :anthropic}
         ReqLLM.Providers.Anthropic.translate_options(operation, synthetic_model, opts)
 
+      "grok" ->
+        synthetic_model = %{model | provider: :xai}
+        ReqLLM.Providers.XAI.translate_options(operation, synthetic_model, opts)
+
       _ ->
         {opts, []}
     end
@@ -1148,6 +1160,8 @@ defmodule ReqLLM.Providers.Azure do
       model_family in ["o1", "o3", "o4"] && reasoning_effort -> 180_000
       model_family in ["o1", "o3", "o4"] -> 120_000
       model_family in ["deepseek", "mai-ds"] -> 120_000
+      model_family == "grok" && reasoning_effort -> 180_000
+      model_family == "grok" -> 120_000
       AdapterHelpers.gpt5_model?(model_id) -> 120_000
       true -> 30_000
     end
